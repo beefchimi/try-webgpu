@@ -44,6 +44,7 @@
   },
   "devDependencies": {
     "@typescript-eslint/parser": "^7.18.0",
+    "@webgpu/types": "^0.1.44",
     "eslint": "^8.57.0",
     "eslint-plugin-astro": "^1.2.3",
     "eslint-plugin-jsx-a11y": "^6.9.0",
