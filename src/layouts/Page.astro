@@ -15,8 +15,8 @@ interface Props {
 const {id, title = 'Try WebGPU'} = Astro.props;
 
 const DESCRIPTION = 'Into the 3rd dimension';
-const PERMALINK = new URL(Astro.url.pathname, Astro.site).href;
-const OG_IMAGE = new URL('/dulmage-social.png', Astro.site).href;
+// const PERMALINK = new URL(Astro.url.pathname, Astro.site).href;
+// const OG_IMAGE = new URL('/dulmage-social.png', Astro.site).href;
 ---
 
 <!doctype html>
@@ -32,10 +32,7 @@ const OG_IMAGE = new URL('/dulmage-social.png', Astro.site).href;
 
     <!-- SEO meta -->
     <meta name="description" content={DESCRIPTION} />
-    <meta
-      name="keywords"
-      content="CodeLab, WebGPU, Experiment"
-    />
+    <meta name="keywords" content="CodeLab, WebGPU, Experiment" />
     <meta name="generator" content={Astro.generator} />
 
     <!-- Web app meta -->
@@ -56,8 +53,6 @@ const OG_IMAGE = new URL('/dulmage-social.png', Astro.site).href;
     <meta property="og:site_name" content="Try WebGPU" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={DESCRIPTION} />
-    <meta property="og:image" content={OG_IMAGE} />
-    <meta property="og:url" content={PERMALINK} />
 
     <!-- Twitter meta -->
     <meta property="twitter:card" content="summary_large_image" />
@@ -67,7 +62,6 @@ const OG_IMAGE = new URL('/dulmage-social.png', Astro.site).href;
     <meta property="twitter:account_id" content="358226505" />
     <meta property="twitter:title" content={title} />
     <meta property="twitter:description" content={DESCRIPTION} />
-    <meta property="twitter:image" content={OG_IMAGE} />
 
     <!-- Google tag script should go here... -->
   </head>
