@@ -1,0 +1,56 @@
+---
+interface Props {
+  width?: number;
+  height?: number;
+}
+
+const {width = 512, height = 512} = Astro.props;
+---
+
+<canvas width={width} height={height}></canvas>
+
+<script>
+  if (!navigator.gpu) throw new Error('WebGPU not supported on this browser.');
+
+  const adapter = await navigator.gpu.requestAdapter();
+
+  if (!adapter) throw new Error('No appropriate GPUAdapter found.');
+
+  const canvas = document.querySelector('canvas');
+  const context = canvas?.getContext('webgpu');
+
+  if (!context) throw new Error('A canvas context could not be created.');
+
+  const device = await adapter.requestDevice();
+  const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+
+  context.configure({
+    device,
+    format: canvasFormat,
+  });
+
+  // We should always clear the <canvas /> before we start drawing.
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginRenderPass({
+    colorAttachments: [
+      {
+        view: context.getCurrentTexture().createView(),
+        // Set the texture color.
+        clearValue: [0, 0, 0.4, 1],
+        // Clear the texture when the render pass starts.
+        loadOp: 'clear',
+        // Once the render pass is finished, save the results of any drawing
+        // (done during the render pass) into the texture.
+        storeOp: 'store',
+      },
+    ],
+  });
+
+  pass.end();
+
+  // Submit all the commands that we have queued up.
+  const commandBuffer = encoder.finish();
+
+  // Finish the command buffer and immediately submit it.
+  device.queue.submit([commandBuffer]);
+</script>
