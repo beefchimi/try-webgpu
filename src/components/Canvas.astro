@@ -10,6 +10,8 @@ const {width = 512, height = 512} = Astro.props;
 <canvas width={width} height={height}></canvas>
 
 <script>
+  // All code authored from:
+  // https://codelabs.developers.google.com/your-first-webgpu-app
   if (!navigator.gpu) throw new Error('WebGPU not supported on this browser.');
 
   const adapter = await navigator.gpu.requestAdapter();
@@ -29,6 +31,84 @@ const {width = 512, height = 512} = Astro.props;
     format: canvasFormat,
   });
 
+  // Create two triangles.
+  // Co-ordinate pairs: odd = x / even = y
+  const vertices = new Float32Array([
+    // Triangle 1 (Blue)
+    -0.8, -0.8, 0.8, -0.8, 0.8, 0.8,
+    // Triangle 2 (Red)
+    -0.8, -0.8, 0.8, 0.8, -0.8, 0.8,
+  ]);
+
+  const vertexBuffer = device.createBuffer({
+    label: 'Cell vertices',
+    // `size` is determined by multiplying the size of a 32-bit float (4 bytes)
+    // by the number of floats in the vertices array (12). `TypedArrays` already
+    // calculate their byteLength, so we can jsut use that.
+    size: vertices.byteLength,
+    // We want the buffer to be used for vertex data (GPUBufferUsage.VERTEX).
+    // We also want to be able to copy data into it (GPUBufferUsage.COPY_DST).
+    // Use of bitwise operator is intentional.
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  });
+
+  // Copy vertex data into the buffer's memory.
+  device.queue.writeBuffer(vertexBuffer, 0, vertices);
+
+  // Define the vertex data structure.
+  const vertexBufferLayout: GPUVertexBufferLayout = {
+    // The number of bytes the GPU needs to skip forward in the buffer when it's
+    // looking for the next vertex. Each vertex of our square is made up of two
+    // 32-bit floating point numbers. 2 floats (4 bytes) is 8 bytes.
+    arrayStride: 8,
+    attributes: [
+      {
+        // Our vertices have two 32-bit floats each, so we use the format `float32x2`.
+        // If our vertex data is instead made up of four 16-bit unsigned integers each,
+        // we would use `uint16x4` instead.
+        format: 'float32x2',
+        // Describes how many bytes into the vertex this particular attribute starts.
+        // Only really relevant when your buffer has more than one attribute.
+        offset: 0,
+        // Links this attribute to a particular input in the vertex shader.
+        // An arbitrary number between 0 and 15 and must be unique for each attribute.
+        shaderLocation: 0,
+      },
+    ],
+  };
+
+  const cellShaderModule = device.createShaderModule({
+    label: 'Cell shader',
+    code: `
+      @vertex
+      fn vertexMain(@location(0) pos: vec2f) -> @builtin(position) vec4f {
+        // 4-dimensional vector (X, Y, Z, W)
+        return vec4f(pos, 0, 1);
+      }
+
+      @fragment
+      fn fragmentMain() -> @location(0) vec4f {
+        // (Red, Green, Blue, Alpha)
+        return vec4f(1, 0, 0, 1);
+      }
+    `,
+  });
+
+  const cellPipeline = device.createRenderPipeline({
+    label: 'Cell pipeline',
+    layout: 'auto',
+    vertex: {
+      module: cellShaderModule,
+      entryPoint: 'vertexMain',
+      buffers: [vertexBufferLayout],
+    },
+    fragment: {
+      module: cellShaderModule,
+      entryPoint: 'fragmentMain',
+      targets: [{format: canvasFormat}],
+    },
+  });
+
   // We should always clear the <canvas /> before we start drawing.
   const encoder = device.createCommandEncoder();
   const pass = encoder.beginRenderPass({
@@ -46,6 +126,10 @@ const {width = 512, height = 512} = Astro.props;
     ],
   });
 
+  pass.setPipeline(cellPipeline);
+  pass.setVertexBuffer(0, vertexBuffer);
+  // Draw 6 vertices
+  pass.draw(vertices.length / 2);
   pass.end();
 
   // Submit all the commands that we have queued up.
