@@ -10,10 +10,15 @@ const {width = 512, height = 512} = Astro.props;
 <canvas width={width} height={height}></canvas>
 
 <script>
-  const GRID_SIZE = 32;
-
   // All code authored from:
   // https://codelabs.developers.google.com/your-first-webgpu-app
+  const GRID_SIZE = 32;
+  const GRID_CELLS = GRID_SIZE * GRID_SIZE;
+  const UPDATE_INTERVAL = 200;
+
+  ///
+  /// Setup
+
   if (!navigator.gpu) throw new Error('WebGPU not supported on this browser.');
 
   const adapter = await navigator.gpu.requestAdapter();
@@ -32,6 +37,9 @@ const {width = 512, height = 512} = Astro.props;
     device,
     format: canvasFormat,
   });
+
+  ///
+  /// Geometry
 
   // Create two triangles.
   // Co-ordinate pairs: odd = x / even = y
@@ -57,6 +65,55 @@ const {width = 512, height = 512} = Astro.props;
   // Copy vertex data into the buffer's memory.
   device.queue.writeBuffer(vertexBuffer, 0, vertices);
 
+  ///
+  /// Shaders
+
+  const cellShaderModule = device.createShaderModule({
+    label: 'Cell shader',
+    code: `
+      struct VertexInput {
+        @location(0) pos: vec2f,
+        @builtin(instance_index) instance: u32,
+      };
+
+      struct VertexOutput {
+        @builtin(position) pos: vec4f,
+        @location(0) cell: vec2f,
+      };
+
+      @group(0) @binding(0) var<uniform> grid: vec2f;
+      @group(0) @binding(1) var<storage> cellState: array<u32>;
+
+      @vertex
+      fn vertexMain(input: VertexInput) -> VertexOutput  {
+        let i = f32(input.instance);
+
+        let cell = vec2f(i % grid.x, floor(i / grid.x));
+        let state = f32(cellState[input.instance]);
+
+        let cellOffset = cell / grid * 2;
+        let gridPos = (input.pos * state + 1) / grid - 1 + cellOffset;
+
+        // 4-dimensional vector (X, Y, Z, W)
+        var output: VertexOutput;
+        output.pos = vec4f(gridPos, 0, 1);
+        output.cell = cell;
+
+        return output;
+      }
+
+      @fragment
+      fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
+        let redGreenChannels = input.cell / grid;
+        // (Red, Green, Blue, Alpha)
+        return vec4f(redGreenChannels, 1 - redGreenChannels.x, 1);
+      }
+    `,
+  });
+
+  ///
+  /// Grid / Cells
+
   // Define the vertex data structure.
   const vertexBufferLayout: GPUVertexBufferLayout = {
     // The number of bytes the GPU needs to skip forward in the buffer when it's
@@ -79,48 +136,6 @@ const {width = 512, height = 512} = Astro.props;
     ],
   };
 
-  const cellShaderModule = device.createShaderModule({
-    label: 'Cell shader',
-    code: `
-      struct VertexInput {
-        @location(0) pos: vec2f,
-        @builtin(instance_index) instance: u32,
-      };
-
-      struct VertexOutput {
-        @builtin(position) pos: vec4f,
-        @location(0) cell: vec2f,
-      };
-
-      @group(0) @binding(0) var<uniform> grid: vec2f;
-
-      @vertex
-      fn vertexMain(input: VertexInput) -> VertexOutput  {
-        let i = f32(input.instance);
-
-        let cell = vec2f(i % grid.x, floor(i / grid.x));
-        let cellOffset = cell / grid * 2;
-
-        // Normalize our grid co-ords + cell placement.
-        let gridPos = (input.pos + 1) / grid - 1 + cellOffset;
-
-        // 4-dimensional vector (X, Y, Z, W)
-        var output: VertexOutput;
-        output.pos = vec4f(gridPos, 0, 1);
-        output.cell = cell;
-
-        return output;
-      }
-
-      @fragment
-      fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
-        let redGreenChannels = input.cell / grid;
-        // (Red, Green, Blue, Alpha)
-        return vec4f(redGreenChannels, 1 - redGreenChannels.x, 1);
-      }
-    `,
-  });
-
   const cellPipeline = device.createRenderPipeline({
     label: 'Cell pipeline',
     layout: 'auto',
@@ -136,24 +151,7 @@ const {width = 512, height = 512} = Astro.props;
     },
   });
 
-  // We should always clear the <canvas /> before we start drawing.
-  const encoder = device.createCommandEncoder();
-  const pass = encoder.beginRenderPass({
-    colorAttachments: [
-      {
-        view: context.getCurrentTexture().createView(),
-        // Set the texture color.
-        clearValue: [0, 0, 0.4, 1],
-        // Clear the texture when the render pass starts.
-        loadOp: 'clear',
-        // Once the render pass is finished, save the results of any drawing
-        // (done during the render pass) into the texture.
-        storeOp: 'store',
-      },
-    ],
-  });
-
-  // Create a uniform buffer that describes the grid.
+  // Create a uniform array + buffer that describes the grid.
   const uniformArray = new Float32Array([GRID_SIZE, GRID_SIZE]);
   const uniformBuffer = device.createBuffer({
     label: 'Grid Uniforms',
@@ -163,27 +161,110 @@ const {width = 512, height = 512} = Astro.props;
 
   device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
 
-  const bindGroup = device.createBindGroup({
-    label: 'Cell renderer bind group',
-    layout: cellPipeline.getBindGroupLayout(0),
-    entries: [
-      {
-        binding: 0,
-        resource: {buffer: uniformBuffer},
-      },
-    ],
-  });
+  // Create an array representing the active state of each cell.
+  const cellStateArray = new Uint32Array(GRID_CELLS);
 
-  pass.setPipeline(cellPipeline);
-  pass.setVertexBuffer(0, vertexBuffer);
-  pass.setBindGroup(0, bindGroup);
-  // Draw 6 vertices for each grid cell.
-  pass.draw(vertices.length / 2, GRID_SIZE * GRID_SIZE);
-  pass.end();
+  // Create two storage buffers to hold the cell state.
+  const cellStateStorage = [
+    device.createBuffer({
+      label: 'Cell State A',
+      size: cellStateArray.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    }),
+    device.createBuffer({
+      label: 'Cell State B',
+      size: cellStateArray.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    }),
+  ];
 
-  // Submit all the commands that we have queued up.
-  const commandBuffer = encoder.finish();
+  // Mark every third cell of the first grid as active.
+  for (let i = 0; i < cellStateArray.length; i += 3) {
+    cellStateArray[i] = 1;
+  }
 
-  // Finish the command buffer and immediately submit it.
-  device.queue.submit([commandBuffer]);
+  device.queue.writeBuffer(cellStateStorage[0], 0, cellStateArray);
+
+  // Mark every other cell of the second grid as active.
+  for (let i = 0; i < cellStateArray.length; i++) {
+    cellStateArray[i] = i % 2;
+  }
+
+  device.queue.writeBuffer(cellStateStorage[1], 0, cellStateArray);
+
+  ///
+  /// Bindings
+
+  const bindGroups = [
+    device.createBindGroup({
+      label: 'Cell renderer bind group A',
+      layout: cellPipeline.getBindGroupLayout(0),
+      entries: [
+        {
+          binding: 0,
+          resource: {buffer: uniformBuffer},
+        },
+        {
+          binding: 1,
+          resource: {buffer: cellStateStorage[0]},
+        },
+      ],
+    }),
+    device.createBindGroup({
+      label: 'Cell renderer bind group B',
+      layout: cellPipeline.getBindGroupLayout(0),
+      entries: [
+        {
+          binding: 0,
+          resource: {buffer: uniformBuffer},
+        },
+        {
+          binding: 1,
+          resource: {buffer: cellStateStorage[1]},
+        },
+      ],
+    }),
+  ];
+
+  ///
+  /// Draw and submit
+
+  let step = 0;
+
+  function updateGrid() {
+    step++;
+
+    // Start a render pass.
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: context!.getCurrentTexture().createView(),
+          // Clear the texture when the render pass starts.
+          loadOp: 'clear',
+          // Set the texture color.
+          clearValue: [0, 0, 0.4, 1],
+          // Once the render pass is finished, save the results of any drawing
+          // (done during the render pass) into the texture.
+          storeOp: 'store',
+        },
+      ],
+    });
+
+    // Draw the grid.
+    pass.setPipeline(cellPipeline);
+    pass.setBindGroup(0, bindGroups[step % 2]);
+    pass.setVertexBuffer(0, vertexBuffer);
+    pass.draw(vertices.length / 2, GRID_CELLS);
+
+    // End the render pass and submit the command buffer.
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+  }
+
+  // Run only once
+  // updateGrid();
+
+  // Loop forever
+  setInterval(updateGrid, UPDATE_INTERVAL);
 </script>
