@@ -82,30 +82,41 @@ const {width = 512, height = 512} = Astro.props;
   const cellShaderModule = device.createShaderModule({
     label: 'Cell shader',
     code: `
+      struct VertexInput {
+        @location(0) pos: vec2f,
+        @builtin(instance_index) instance: u32,
+      };
+
+      struct VertexOutput {
+        @builtin(position) pos: vec4f,
+        @location(0) cell: vec2f,
+      };
+
       @group(0) @binding(0) var<uniform> grid: vec2f;
 
       @vertex
-      fn vertexMain(
-        @location(0) pos: vec2f,
-        @builtin(instance_index) instance: u32
-      ) -> @builtin(position) vec4f {
-        // Save the instance_index as a float
-        let i = f32(instance);
+      fn vertexMain(input: VertexInput) -> VertexOutput  {
+        let i = f32(input.instance);
 
         let cell = vec2f(i % grid.x, floor(i / grid.x));
         let cellOffset = cell / grid * 2;
 
         // Normalize our grid co-ords + cell placement.
-        let gridPos = (pos + 1) / grid - 1 + cellOffset;
+        let gridPos = (input.pos + 1) / grid - 1 + cellOffset;
 
         // 4-dimensional vector (X, Y, Z, W)
-        return vec4f(gridPos, 0, 1);
+        var output: VertexOutput;
+        output.pos = vec4f(gridPos, 0, 1);
+        output.cell = cell;
+
+        return output;
       }
 
       @fragment
-      fn fragmentMain() -> @location(0) vec4f {
+      fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
+        let redGreenChannels = input.cell / grid;
         // (Red, Green, Blue, Alpha)
-        return vec4f(1, 0, 0, 1);
+        return vec4f(redGreenChannels, 1 - redGreenChannels.x, 1);
       }
     `,
   });
